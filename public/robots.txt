@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://vanta-pulse.vercel.app/sitemap.xml

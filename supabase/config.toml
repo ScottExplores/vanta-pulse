@@ -1,0 +1,4 @@
+[functions.vanta-pulse-leaderboard]
+# The game has no account wall. The function implements its own strict public
+# boundary, rate limiting, ticketing, and server-side replay verification.
+verify_jwt = false
