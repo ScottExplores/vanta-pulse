@@ -4,6 +4,8 @@ Reference: `concept-gameplay.png`
 
 Release implementation: `implementation-gameplay.png`
 
+Production source: `https://vanta-pulse.vercel.app/` (captured July 31, 2026)
+
 | Visual target | Release result | Status |
 | --- | --- | --- |
 | Eclipsed neon-city atmosphere | The playable stage preserves the central eclipse, deep black negative space, luminous skyline, and nocturnal sci-fi mood. | Pass |
