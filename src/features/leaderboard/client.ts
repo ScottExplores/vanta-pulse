@@ -269,7 +269,7 @@ const resolveLocalScope = (
     const level = getCampaignLevel(request.levelId);
     if (!level) throw new TypeError("Unknown campaign level");
     return {
-      boardId: `campaign:${level.id}`,
+      boardId: `campaign:v${SIMULATION_VERSION}:${level.id}`,
       mode: "campaign",
       levelId: level.id,
       seed: level.seed,
@@ -279,7 +279,7 @@ const resolveLocalScope = (
   if (request.mode === "daily") {
     const date = request.date ?? now.toISOString().slice(0, 10);
     return {
-      boardId: `daily:${date}`,
+      boardId: `daily:v${SIMULATION_VERSION}:${date}`,
       mode: "daily",
       levelId: `daily-${date}`,
       seed: dailySeedForDate(date),
@@ -292,7 +292,7 @@ const resolveLocalScope = (
   }
   const seed = randomUint32() >>> 0;
   return {
-    boardId: `endless:${segmentCount}`,
+    boardId: `endless:v${SIMULATION_VERSION}:${segmentCount}`,
     mode: "endless",
     levelId: endlessLevelId(seed, segmentCount),
     seed,

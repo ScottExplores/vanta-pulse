@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "smoke:leaderboard": "tsx scripts/smoke-leaderboard.ts",
-    "optimize:art": "node scripts/optimize-art.mjs"
+    "optimize:art": "node scripts/optimize-art.mjs",
+    "prepare:sprites": "node scripts/prepare-sprites.mjs"
   },
   "dependencies": {
     "@fontsource-variable/space-grotesk": "5.2.8",

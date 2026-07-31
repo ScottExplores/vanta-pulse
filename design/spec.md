@@ -26,4 +26,4 @@ VANTA//PULSE is a kinetic light-runner through a collapsing signal lattice. The 
 
 ## Production-art policy
 
-Generated raster art supplies the level backdrops and concept references. Player, rails, hazards, portals, particles, and shader masks are deliberately code-native vector geometry so they stay mathematically crisp, reactive, resolution-independent, and aligned with deterministic collision boxes. This is an intentional deviation from raster sprite production, not placeholder art.
+Generated raster art supplies the level backdrops, concept references, and the six-pose Vanta courier atlas. The courier artwork is animation-only and pins to the deterministic 42x42 collision box through a shared contact baseline; a code-native vector courier remains the resilient loading fallback. Rails, hazards, portals, particles, and shader masks stay mathematically crisp, reactive, and resolution-independent.

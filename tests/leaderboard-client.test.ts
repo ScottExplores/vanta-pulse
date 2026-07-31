@@ -4,6 +4,7 @@ import {
   sanitizeCallsign,
   type StorageLike,
 } from "../src/features/leaderboard";
+import { SIMULATION_VERSION } from "../src/game/sim";
 
 class TestStorage implements StorageLike {
   readonly values = new Map<string, string>();
@@ -53,11 +54,11 @@ const ticketEnvelope = (
     expiresAt,
     renewalCredential: RENEWAL_CREDENTIAL,
     renewalExpiresAt: "2026-07-31T14:00:00.000Z",
-    boardId: "campaign:glass-horizon",
+    boardId: "campaign:v2:glass-horizon",
     mode: "campaign",
     levelId: "glass-horizon",
     seed: 0x474c4153,
-    simulationVersion: 1,
+    simulationVersion: SIMULATION_VERSION,
   },
 });
 
@@ -107,7 +108,7 @@ describe("offline leaderboard client", () => {
     expect(ticket).toMatchObject({
       status: "local",
       reason: "unconfigured",
-      boardId: "campaign:glass-horizon",
+      boardId: "campaign:v2:glass-horizon",
       levelId: "glass-horizon",
       seed: 0x474c4153,
     });
@@ -159,14 +160,31 @@ describe("offline leaderboard client", () => {
     });
     client.getIdentity();
     client.recordLocalScore(
-      "campaign:phase-bloom",
+      "campaign:v2:phase-bloom",
       { score: 9_000, durationMs: 20_000 },
       RUN_ID,
     );
 
-    const board = await client.fetchLeaderboard("campaign:phase-bloom", 10);
+    const board = await client.fetchLeaderboard("campaign:v2:phase-bloom", 10);
     expect(board).toMatchObject({ status: "local", fallbackReason: "offline" });
     expect(board.entries[0]).toMatchObject({ score: 9_000, status: "local" });
+  });
+
+  it("keeps legacy physics scores isolated from v2 boards", async () => {
+    const storage = new TestStorage();
+    const client = createLeaderboardClient({ endpoint: null, storage, randomUUID: () => CLIENT_ID });
+    client.getIdentity();
+    client.recordLocalScore(
+      "campaign:glass-horizon",
+      { score: 99_999, durationMs: 10_000 },
+      RUN_ID,
+    );
+    const ticket = await client.issueTicket({ mode: "campaign", levelId: "glass-horizon" });
+    const current = await client.fetchLeaderboard(ticket.boardId);
+    const legacy = await client.fetchLeaderboard("campaign:glass-horizon");
+    expect(ticket.boardId).toBe("campaign:v2:glass-horizon");
+    expect(current.entries).toEqual([]);
+    expect(legacy.entries).toHaveLength(1);
   });
 });
 
@@ -180,7 +198,7 @@ describe("verified leaderboard client credentials", () => {
         return json({
           ok: true,
           leaderboard: {
-            boardId: "campaign:glass-horizon",
+            boardId: "campaign:v2:glass-horizon",
             status: "verified",
             entries: [
               {
@@ -225,7 +243,7 @@ describe("verified leaderboard client credentials", () => {
     });
     expect(await second.issueTicket({ mode: "campaign", levelId: "glass-horizon" }))
       .toMatchObject({ status: "verified" });
-    const board = await second.fetchLeaderboard("campaign:glass-horizon");
+    const board = await second.fetchLeaderboard("campaign:v2:glass-horizon");
     expect(board.entries[0]).toMatchObject({
       publicId: SERVER_PUBLIC_ID,
       isCurrentPlayer: true,
@@ -297,7 +315,7 @@ describe("verified leaderboard client credentials", () => {
         result: {
           status: "verified",
           runId: "018f4c2a-6f23-7d81-9b4e-c320ae0faaaa",
-          boardId: "campaign:glass-horizon",
+          boardId: "campaign:v2:glass-horizon",
           score: 12_000,
           durationMs: 15_000,
           isPersonalBest: false,
@@ -362,7 +380,7 @@ describe("verified leaderboard client credentials", () => {
         result: {
           status: "verified",
           runId: "018f4c2a-6f23-7d81-9b4e-c320ae0fbbbb",
-          boardId: "campaign:glass-horizon",
+          boardId: "campaign:v2:glass-horizon",
           score: 10_000,
           durationMs: 16_000,
           isPersonalBest: true,

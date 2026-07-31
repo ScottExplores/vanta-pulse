@@ -1,4 +1,5 @@
 import { createEndlessLevel } from "../src/game/content";
+import { SIMULATION_VERSION } from "../src/game/sim";
 import { createReferenceReplay } from "../tests/helpers/referenceReplay";
 
 const endpoint = process.env.VANTA_PULSE_LEADERBOARD_URL ??
@@ -42,7 +43,7 @@ const ticketEnvelope = await post("/ticket", {
   credential: identity.credential,
   mode: "endless",
   segmentCount,
-  simulationVersion: 1,
+  simulationVersion: SIMULATION_VERSION,
 });
 
 const originalTicket = ticketEnvelope.ticket as {
@@ -54,7 +55,10 @@ const originalTicket = ticketEnvelope.ticket as {
   renewalExpiresAt: string;
 };
 const level = createEndlessLevel(originalTicket.seed, segmentCount);
-if (level.id !== originalTicket.levelId || originalTicket.boardId !== `endless:${segmentCount}`) {
+if (
+  level.id !== originalTicket.levelId ||
+  originalTicket.boardId !== `endless:v${SIMULATION_VERSION}:${segmentCount}`
+) {
   throw new Error("Ticket content does not match the deterministic level generator");
 }
 

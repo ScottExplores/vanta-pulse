@@ -79,6 +79,22 @@ describe("campaign content contracts", () => {
       }
     }
   });
+
+  it("teaches Glass Horizon with a two-second runway and two single spikes", () => {
+    const beatDistance = GLASS_HORIZON.beatTicks * GLASS_HORIZON.speed;
+    const orderedThreats = [
+      ...GLASS_HORIZON.hazards.map((hazard) => ({ x: hazard.x, kind: hazard.kind })),
+      ...GLASS_HORIZON.gaps.map((gap) => ({ x: gap.startX, kind: "gap" as const })),
+    ].sort((left, right) => left.x - right.x);
+    const beats = orderedThreats.map(({ x }) =>
+      (x - THREAT_LAUNCH_DISTANCE - GLASS_HORIZON.startX) / beatDistance,
+    );
+    expect(beats).toEqual([4, 8, 12, 16, 19, 22, 24, 26, 28]);
+    expect(orderedThreats.slice(0, 2).map(({ kind }) => kind)).toEqual(["spike", "spike"]);
+    expect(GLASS_HORIZON.prisms.filter((prism) => prism.y === 18).map((prism) => prism.x)).toEqual(
+      [1, 2, 10, 27].map((beat) => GLASS_HORIZON.startX + beat * beatDistance),
+    );
+  });
 });
 
 describe("120 Hz deterministic simulation", () => {
@@ -98,18 +114,53 @@ describe("120 Hz deterministic simulation", () => {
     expect(first.finalState.score.flow).toBeGreaterThan(0);
   });
 
-  it("makes a held jump materially higher than a tap using only integer physics", () => {
+  it("uses a longer, integer-only spring arc with an exact landing", () => {
     const level = quiet(GLASS_HORIZON);
-    const tapped = stepMany(createSimulation(level), 14, (tick) => tick === 0);
-    const held = stepMany(
-      createSimulation(level),
-      14,
-      (tick) => tick < SIMULATION_RULES.maxHoldTicks,
-    );
-    expect(Number.isInteger(tapped.player.y)).toBe(true);
-    expect(Number.isInteger(held.player.y)).toBe(true);
-    expect(held.player.y).toBeGreaterThan(tapped.player.y + 80);
-    expect(held.player.velocityY).toBeGreaterThan(tapped.player.velocityY);
+    const measureArc = (heldTicks: number) => {
+      let state = createSimulation(level);
+      let peak = 0;
+      const landEvents: number[] = [];
+      while (state.tick < 100 && landEvents.length === 0) {
+        state = stepSimulation(state, { jump: state.tick < heldTicks });
+        peak = Math.max(peak, state.player.y);
+        landEvents.push(...state.events.filter((event) => event.type === "land").map((event) => event.tick));
+      }
+      return { state, peak, landEvents };
+    };
+    const tapped = measureArc(1);
+    const held = measureArc(SIMULATION_RULES.maxHoldTicks);
+    expect(tapped).toMatchObject({ peak: 120, landEvents: [31] });
+    expect(held).toMatchObject({ peak: 225, landEvents: [44] });
+    for (const arc of [tapped, held]) {
+      expect(arc.state.player).toMatchObject({ y: 0, velocityY: 0, grounded: true });
+      expect(Number.isInteger(arc.peak)).toBe(true);
+    }
+  });
+
+  it("gives the first Glass spike forgiving tap and hold input windows", () => {
+    const first = [...GLASS_HORIZON.hazards].sort((left, right) => left.x - right.x)[0]!;
+    const opening: LevelDefinition = {
+      ...quiet(GLASS_HORIZON),
+      finishX: first.x + first.width + 240,
+      hazards: [first],
+    };
+    const survives = (startTick: number, heldTicks: number) => {
+      let state = createSimulation(opening);
+      while (state.status === "running") {
+        state = stepSimulation(state, {
+          jump: state.tick >= startTick && state.tick < startTick + heldTicks,
+        });
+      }
+      return state.status === "finished";
+    };
+    const tapWindow = Array.from({ length: 80 }, (_, index) => 190 + index)
+      .filter((tick) => survives(tick, 1));
+    const holdWindow = Array.from({ length: 80 }, (_, index) => 190 + index)
+      .filter((tick) => survives(tick, SIMULATION_RULES.maxHoldTicks));
+    expect(tapWindow.length).toBeGreaterThanOrEqual(18);
+    expect(holdWindow.length).toBeGreaterThanOrEqual(30);
+    expect(tapWindow).toContain(240);
+    expect(holdWindow).toContain(240);
   });
 
   it("uses exact perfect/great/good/miss timing boundaries", () => {
@@ -286,5 +337,18 @@ describe("authoritative replay verification", () => {
         1_000,
       ),
     ).toEqual({ valid: false, reason: "replay events must have strictly increasing ticks" });
+  });
+
+  it("fails closed on legacy physics replays", () => {
+    const current = createReferenceReplay(GLASS_HORIZON);
+    const legacy: Replay = { ...current, simulationVersion: 1 };
+    const result = verifyReplay({
+      mode: "campaign",
+      levelId: GLASS_HORIZON.id,
+      replay: legacy,
+      simulationVersion: 1,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/simulation version/i);
   });
 });

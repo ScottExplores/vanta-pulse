@@ -1,14 +1,14 @@
-export const SIMULATION_VERSION = 1 as const;
+export const SIMULATION_VERSION = 2 as const;
 export const REPLAY_VERSION = 1 as const;
 export const SIMULATION_HZ = 120 as const;
 
 export const SIMULATION_RULES = Object.freeze({
   playerWidth: 42,
   playerHeight: 42,
-  gravityPerTick: 2,
-  jumpVelocity: 24,
+  gravityPerTick: 1,
+  jumpVelocity: 15,
   holdBoostPerTick: 1,
-  maxHoldTicks: 10,
+  maxHoldTicks: 8,
   deathY: -150,
   echoVisualSpacing: 66,
   maxReplayEvents: 1_024,

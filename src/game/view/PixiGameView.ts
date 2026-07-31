@@ -5,11 +5,21 @@ import {
   BlurFilter,
   Container,
   Graphics,
+  Rectangle,
   Sprite,
   Texture,
   type Ticker,
 } from "pixi.js";
 import { NeonPostFx } from "./PostFx";
+import {
+  projectTrailX,
+  projectCourierAnchor,
+  selectCourierFrame,
+  selectTrailSamplesByAge,
+  trailSampleFor,
+  type CourierFrameIndex,
+  type TrailSample,
+} from "./presentation";
 import type {
   GameRenderFrame,
   RenderActor,
@@ -22,6 +32,11 @@ import type {
 
 const WIDTH = 960;
 const HEIGHT = 540;
+const COURIER_SHEET = "/art/sprites/vanta-courier-v1.webp";
+const COURIER_FRAME_SIZE = 128;
+const COURIER_CONTENT_SIZE = 108;
+const COURIER_CONTACT_Y = 118 / COURIER_FRAME_SIZE;
+const COURIER_SCALE = 42 / COURIER_CONTENT_SIZE;
 const BACKDROPS: Record<VisualThemeId, string> = {
   "glass-horizon": "/art/backdrops/glass-horizon.webp",
   "phase-bloom": "/art/backdrops/phase-bloom.webp",
@@ -39,6 +54,7 @@ const PALETTES: Record<VisualThemeId, { primary: number; secondary: number; acce
 };
 
 type Particle = {
+  /** World-space x so particles remain attached to the scrolling playfield. */
   x: number;
   y: number;
   vx: number;
@@ -50,6 +66,17 @@ type Particle = {
 };
 
 type Ring = { x: number; y: number; radius: number; life: number; color: number };
+
+type ActorVisual = {
+  root: Container;
+  spring: Container;
+  sprite: Sprite | null;
+  fallback: Graphics;
+  halo: Graphics;
+  lastGrounded: boolean;
+  launchAt: number;
+  landAt: number;
+};
 
 export type PixiViewOptions = {
   quality?: RenderQuality;
@@ -71,21 +98,25 @@ export class PixiGameView {
   private readonly farGrid = new Graphics();
   private readonly glowLayer = new Container();
   private readonly glowGeometry = new Graphics();
+  private readonly trailGlow = new Graphics();
   private readonly geometry = new Graphics();
   private readonly trail = new Graphics();
+  private readonly afterimageLayer = new Container();
   private readonly playerLayer = new Container();
-  private readonly actors = new Map<string, Graphics>();
+  private readonly actors = new Map<string, ActorVisual>();
+  private readonly afterimages: Sprite[] = [];
   private readonly particlesGraphic = new Graphics();
   private readonly overlayGraphic = new Graphics();
   private readonly backgroundSprites = new Map<VisualThemeId, Sprite>();
   private readonly particles: Particle[] = [];
   private readonly rings: Ring[] = [];
-  private readonly trails = new Map<string, Array<{ x: number; y: number }>>();
+  private readonly trails = new Map<string, TrailSample[]>();
   private readonly seenPulses = new Set<string>();
   private postFx: NeonPostFx | null = null;
   private blur: BlurFilter | null = null;
   private frame: GameRenderFrame | null = null;
   private lastTick = -1;
+  private lastAttempt = -1;
   private theme: VisualThemeId = "glass-horizon";
   private quality: RenderQuality = "high";
   private reducedMotion = false;
@@ -97,6 +128,7 @@ export class PixiGameView {
     burstId: "clean-break",
   };
   private elapsed = 0;
+  private courierFrames: Texture[] | null = null;
   private disposed = false;
   private appInitialized = false;
   private initPromise: Promise<void> | null = null;
@@ -134,6 +166,7 @@ export class PixiGameView {
       hello: false,
     });
     this.appInitialized = true;
+    this.world.filterArea = new Rectangle(0, 0, WIDTH, HEIGHT);
     if (this.disposed) return;
 
     const loaded = await Promise.all(
@@ -153,8 +186,38 @@ export class PixiGameView {
       this.backdropLayer.addChild(sprite);
     }
 
+    try {
+      const sheet = await Assets.load<Texture>(COURIER_SHEET);
+      if (!this.disposed) {
+        this.courierFrames = Array.from({ length: 6 }, (_, index) => new Texture({
+          source: sheet.source,
+          frame: new Rectangle(
+            (index % 3) * COURIER_FRAME_SIZE,
+            Math.floor(index / 3) * COURIER_FRAME_SIZE,
+            COURIER_FRAME_SIZE,
+            COURIER_FRAME_SIZE,
+          ),
+        }));
+        for (let index = 0; index < 6; index += 1) {
+          const ghost = new Sprite(this.courierFrames[0]);
+          ghost.anchor.set(0.5, COURIER_CONTACT_Y);
+          ghost.scale.set(COURIER_SCALE);
+          ghost.blendMode = "add";
+          ghost.visible = false;
+          this.afterimages.push(ghost);
+          this.afterimageLayer.addChild(ghost);
+        }
+      }
+    } catch {
+      // The vector courier below is an intentional offline/fetch fallback.
+      this.courierFrames = null;
+    }
+
     this.drawFarGrid();
-    this.glowLayer.addChild(this.glowGeometry);
+    this.trail.blendMode = "add";
+    this.trailGlow.blendMode = "add";
+    this.particlesGraphic.blendMode = "add";
+    this.glowLayer.addChild(this.glowGeometry, this.trailGlow);
     this.blur = new BlurFilter({
       strength: this.quality === "high" ? 7 : 4.5,
       quality: 1,
@@ -169,6 +232,7 @@ export class PixiGameView {
       this.glowLayer,
       this.geometry,
       this.trail,
+      this.afterimageLayer,
       this.playerLayer,
       this.particlesGraphic,
       this.overlayGraphic,
@@ -227,34 +291,50 @@ export class PixiGameView {
       this.resizeObserver = null;
       if (!this.appInitialized) return;
       this.app.ticker.remove(this.onTick, this);
+      this.world.filters = [];
+      this.glowLayer.filters = [];
       this.postFx?.destroy();
       this.postFx = null;
       this.blur?.destroy();
       this.blur = null;
       this.actors.clear();
       this.trails.clear();
+      this.afterimages.length = 0;
+      this.backgroundSprites.clear();
+      this.seenPulses.clear();
       this.particles.length = 0;
       this.rings.length = 0;
+      for (const texture of this.courierFrames ?? []) {
+        // Pixi 8.13 does not detach a subtexture from its shared source when
+        // destroySource is false, so release the resize listener explicitly.
+        texture.source.off("resize", texture.update, texture);
+        texture.destroy(false);
+      }
+      this.courierFrames = null;
       this.app.destroy({ removeView: false }, { children: true, texture: false, textureSource: false });
     })();
     return this.destroyPromise;
   }
 
   private readonly onTick = (ticker: Ticker) => {
-    const delta = Math.min(0.05, ticker.deltaMS / 1000);
+    const rawDelta = Math.min(0.05, ticker.deltaMS / 1000);
+    const delta = this.frame?.state === "paused" ? 0 : rawDelta;
     this.elapsed += delta;
     this.postFx?.update(delta, this.elapsed);
-    this.updateParticles(delta);
+    if (delta > 0) this.updateParticles(delta);
     if (!this.frame) return;
     this.renderFrame(this.frame, delta);
   };
 
   private renderFrame(frame: GameRenderFrame, delta: number) {
+    if (frame.attempt !== this.lastAttempt || frame.tick < this.lastTick) {
+      this.resetTransientEffects(frame);
+    }
     const palette = PALETTES[frame.theme];
     if (frame.theme !== this.theme) this.setTheme(frame.theme);
     this.backdropLayer.x = this.reducedMotion ? 0 : -Math.sin(frame.progress * Math.PI) * 26;
     this.backdropLayer.y = this.reducedMotion ? 0 : Math.cos(frame.progress * Math.PI * 2) * 4;
-    this.farGrid.x = -(frame.cameraX * 0.08) % 96;
+    this.farGrid.x = this.reducedMotion ? 0 : -(frame.cameraX * 0.08) % 96;
     const shake = this.reducedMotion ? 0 : Math.max(0, frame.shake ?? 0);
     this.world.x = shake ? Math.sin(this.elapsed * 110) * shake : 0;
     this.world.y = shake ? Math.cos(this.elapsed * 97) * shake * 0.6 : 0;
@@ -264,11 +344,30 @@ export class PixiGameView {
     for (const object of frame.objects) this.drawObject(object, frame.cameraX, palette);
     for (const prism of frame.prisms) this.drawPrism(prism, frame.cameraX, palette);
 
-    this.drawActors(frame.actors, frame.cameraX, palette, delta);
     if (frame.pulses) this.consumePulses(frame.pulses, frame.cameraX, palette);
-    this.drawParticles();
+    this.drawActors(frame.actors, frame.cameraX, palette, delta);
+    this.drawParticles(frame.cameraX);
     this.drawOverlay(frame, palette);
     this.lastTick = frame.tick;
+    this.lastAttempt = frame.attempt;
+  }
+
+  private resetTransientEffects(frame: GameRenderFrame) {
+    this.trails.clear();
+    this.particles.length = 0;
+    this.rings.length = 0;
+    this.seenPulses.clear();
+    this.trail.clear();
+    this.trailGlow.clear();
+    this.particlesGraphic.clear();
+    for (const ghost of this.afterimages) ghost.visible = false;
+    for (const [id, visual] of this.actors) {
+      visual.lastGrounded = frame.actors.find((actor) => actor.id === id)?.grounded ?? true;
+      visual.launchAt = Number.NEGATIVE_INFINITY;
+      visual.landAt = Number.NEGATIVE_INFINITY;
+    }
+    this.lastTick = -1;
+    this.lastAttempt = frame.attempt;
   }
 
   private drawObject(
@@ -382,48 +481,66 @@ export class PixiGameView {
   ) {
     const active = new Set<string>();
     this.trail.clear();
+    this.trailGlow.clear();
+    for (const ghost of this.afterimages) ghost.visible = false;
     for (let index = 0; index < actors.length; index += 1) {
       const actor = actors[index]!;
       active.add(actor.id);
-      let graphic = this.actors.get(actor.id);
-      if (!graphic) {
-        graphic = new Graphics();
-        if (index === 0 && this.cosmetics.shellId === "bloom-shell") {
-          graphic
-            .poly([0, -20, 16, 0, 0, 20, -16, 0], true)
-            .fill({ color: 0x11051a, alpha: 0.94 })
-            .stroke({ width: 2.6, color: 0xff2bd6 });
-          graphic.poly([0, -12, 9, 0, 0, 12, -9, 0], true).fill({ color: 0xff2bd6, alpha: 0.5 });
-        } else if (index === 0 && this.cosmetics.shellId === "null-shell") {
-          graphic
-            .poly([0, -18, 15, -9, 15, 9, 0, 18, -15, 9, -15, -9], true)
-            .fill({ color: 0x07130b, alpha: 0.94 })
-            .stroke({ width: 2.6, color: 0xc8ff4a });
-          graphic.poly([0, -10, 9, -5, 9, 5, 0, 10, -9, 5, -9, -5], true).fill({ color: 0xc8ff4a, alpha: 0.42 });
-        } else {
-          graphic
-            .poly([0, -17, 15, -3, 8, 16, -10, 13, -17, -5], true)
-            .fill({ color: 0x04131b, alpha: 0.92 })
-            .stroke({ width: 2.5, color: actor.color ?? palette.primary });
-          graphic
-            .poly([0, -10, 8, -2, 3, 9, -6, 7, -9, -3], true)
-            .fill({ color: actor.color ?? palette.primary, alpha: 0.46 });
-        }
-        graphic.circle(0, 0, 2.4).fill({ color: 0xffffff, alpha: 0.9 });
-        this.actors.set(actor.id, graphic);
-        this.playerLayer.addChild(graphic);
-      }
+      let visual = this.actors.get(actor.id);
+      if (!visual) visual = this.createActorVisual(actor);
+      if (visual.lastGrounded && !actor.grounded) visual.launchAt = this.elapsed;
+      if (!visual.lastGrounded && actor.grounded) visual.landAt = this.elapsed;
+      visual.lastGrounded = actor.grounded;
+
+      const frameIndex = this.courierFrameFor(actor, visual);
       const x = actor.x - cameraX;
-      graphic.position.set(x, actor.y);
-      graphic.rotation = this.reducedMotion ? 0 : actor.rotation;
-      graphic.alpha = actor.dead ? 0.08 : (actor.alpha ?? (index === 0 ? 1 : 0.54));
       const shellTint = this.cosmetics.shellId === "bloom-shell"
         ? 0xff2bd6
         : this.cosmetics.shellId === "null-shell"
           ? 0xc8ff4a
           : palette.primary;
-      graphic.tint = actor.color ?? (index === 0 ? shellTint : index === 1 ? palette.secondary : palette.accent);
-      graphic.scale.set(actor.dead ? 1.35 : 1);
+      const accent = actor.color ?? (index === 0 ? shellTint : index === 1 ? palette.secondary : palette.accent);
+      const landingAge = this.elapsed - visual.landAt;
+      const launchAge = this.elapsed - visual.launchAt;
+      let scaleX = 1;
+      let scaleY = 1;
+      let bob = 0;
+      if (this.reducedMotion) {
+        if (landingAge >= 0 && landingAge < 0.1) {
+          scaleX = 1.03;
+          scaleY = 0.97;
+        }
+      } else {
+        if (launchAge >= 0 && launchAge < 0.16) {
+          const release = 1 - launchAge / 0.16;
+          scaleX *= 1 - 0.08 * release;
+          scaleY *= 1 + 0.12 * release;
+        }
+        if (landingAge >= 0 && landingAge < 0.34) {
+          const impact = Math.exp(-11 * landingAge) * Math.cos(34 * landingAge);
+          scaleX *= Math.max(0.84, Math.min(1.22, 1 + 0.2 * impact));
+          scaleY *= Math.max(0.84, Math.min(1.22, 1 - 0.16 * impact));
+        } else if (actor.grounded) {
+          bob = Math.sin((this.frame?.beatPhase ?? 0) * Math.PI * 2) * 1.4;
+        }
+      }
+      const roleScale = actor.role === "echo" ? 0.88 : 1;
+      visual.root.position.set(x, actor.y + bob);
+      visual.root.rotation = this.reducedMotion ? 0 : actor.rotation;
+      visual.root.alpha = actor.dead ? 0.08 : (actor.alpha ?? (index === 0 ? 1 : 0.54));
+      visual.root.scale.set(actor.dead ? 1.3 : 1);
+      visual.spring.scale.set(scaleX * roleScale, scaleY * roleScale);
+      visual.halo.tint = accent;
+      visual.halo.alpha = actor.role === "courier" ? 0.9 : 0.45;
+      visual.fallback.tint = accent;
+      if (visual.sprite && this.courierFrames) {
+        visual.sprite.texture = this.courierFrames[frameIndex] ?? this.courierFrames[0]!;
+        visual.sprite.visible = true;
+        visual.sprite.tint = 0xffffff;
+        visual.fallback.visible = false;
+      } else {
+        visual.fallback.visible = true;
+      }
 
       let history = this.trails.get(actor.id);
       if (!history) {
@@ -431,38 +548,157 @@ export class PixiGameView {
         this.trails.set(actor.id, history);
       }
       if (this.lastTick !== this.frame?.tick && !actor.dead) {
-        history.push({ x, y: actor.y });
-        const cap = this.quality === "low" ? 9 : this.quality === "medium" ? 16 : 25;
-        if (history.length > cap) history.splice(0, history.length - cap);
+        history.push(trailSampleFor(actor, this.frame?.tick ?? 0, frameIndex));
+        const maxAgeTicks = this.reducedMotion
+          ? 18
+          : this.quality === "low"
+            ? 24
+            : this.quality === "medium"
+              ? 38
+              : 52;
+        const firstRetained = history.findIndex((sample) => sample.tick >= (this.frame?.tick ?? 0) - maxAgeTicks);
+        if (firstRetained > 0) history.splice(0, firstRetained);
       }
       if (history.length > 1) {
-        this.trail.moveTo(history[0]!.x, history[0]!.y);
-        for (let i = 1; i < history.length; i += 1) this.trail.lineTo(history[i]!.x, history[i]!.y);
-        this.trail.stroke({
-          width: index === 0 ? 4 : 2,
-          color: index === 0
-            ? this.cosmetics.trailId === "afterimage"
-              ? 0xff2bd6
-              : this.cosmetics.trailId === "event-horizon"
-                ? 0xc8ff4a
-                : actor.color ?? palette.primary
-            : actor.color ?? palette.secondary,
-          alpha: index === 0 ? 0.64 : 0.3,
-        });
+        const color = index === 0
+          ? this.cosmetics.trailId === "afterimage"
+            ? 0xff2bd6
+            : this.cosmetics.trailId === "event-horizon"
+              ? 0xc8ff4a
+              : actor.color ?? palette.primary
+          : actor.color ?? palette.secondary;
+        this.drawTrailRibbon(history, cameraX, color, index === 0);
+        if (index === 0) this.drawAfterimages(history, cameraX, color, this.frame?.tick ?? 0);
       }
     }
-    for (const [id, graphic] of this.actors) {
+    for (const [id, visual] of this.actors) {
       if (!active.has(id)) {
-        graphic.destroy();
+        visual.root.destroy({ children: true });
         this.actors.delete(id);
         this.trails.delete(id);
       }
     }
   }
 
+  private createActorVisual(actor: RenderActor): ActorVisual {
+    const root = new Container();
+    const spring = new Container();
+    const halo = new Graphics();
+    halo
+      .circle(0, 0, 26)
+      .fill({ color: 0xffffff, alpha: 0.08 })
+      .stroke({ width: 5, color: 0xffffff, alpha: 0.2 });
+    halo.poly([0, -28, 24, 0, 0, 28, -24, 0], true).stroke({ width: 2, color: 0xffffff, alpha: 0.3 });
+    halo.blendMode = "add";
+
+    const fallback = new Graphics();
+    fallback
+      .poly([0, -17, 15, -3, 8, 16, -10, 13, -17, -5], true)
+      .fill({ color: 0x07131a, alpha: 0.96 })
+      .stroke({ width: 2.5, color: 0xffffff });
+    fallback.poly([0, -10, 8, -2, 3, 9, -6, 7, -9, -3], true).fill({ color: 0xffffff, alpha: 0.48 });
+    fallback.circle(0, 0, 2.4).fill({ color: 0xffffff, alpha: 0.96 });
+
+    const sprite = this.courierFrames ? new Sprite(this.courierFrames[0]) : null;
+    if (sprite) {
+      sprite.anchor.set(0.5, COURIER_CONTACT_Y);
+      sprite.position.set(0, 21);
+      sprite.scale.set(COURIER_SCALE);
+    }
+    spring.addChild(halo);
+    if (sprite) spring.addChild(sprite);
+    spring.addChild(fallback);
+    fallback.visible = sprite === null;
+    root.addChild(spring);
+    this.playerLayer.addChild(root);
+    const visual: ActorVisual = {
+      root,
+      spring,
+      sprite,
+      fallback,
+      halo,
+      lastGrounded: actor.grounded,
+      launchAt: Number.NEGATIVE_INFINITY,
+      landAt: Number.NEGATIVE_INFINITY,
+    };
+    this.actors.set(actor.id, visual);
+    return visual;
+  }
+
+  private courierFrameFor(actor: RenderActor, visual: ActorVisual): CourierFrameIndex {
+    return selectCourierFrame(
+      actor,
+      this.frame?.tick ?? 0,
+      this.elapsed - visual.landAt,
+      this.reducedMotion,
+    );
+  }
+
+  private drawTrailRibbon(
+    history: readonly TrailSample[],
+    cameraX: number,
+    color: number,
+    primary: boolean,
+  ) {
+    for (let index = 1; index < history.length; index += 1) {
+      const previous = history[index - 1]!;
+      const current = history[index]!;
+      const strength = index / Math.max(1, history.length - 1);
+      const x0 = projectTrailX(previous, cameraX);
+      const x1 = projectTrailX(current, cameraX);
+      if (x1 < -100 || x0 > WIDTH + 100) continue;
+      const alpha = (primary ? 0.12 : 0.055) + strength * (primary ? 0.56 : 0.24);
+      this.trailGlow
+        .moveTo(x0, previous.y)
+        .lineTo(x1, current.y)
+        .stroke({ width: (primary ? 8 : 5) + strength * (primary ? 7 : 4), color, alpha: alpha * 0.52 });
+      this.trail
+        .moveTo(x0, previous.y)
+        .lineTo(x1, current.y)
+        .stroke({ width: (primary ? 1.4 : 0.9) + strength * (primary ? 3.2 : 1.7), color, alpha });
+      if (primary) {
+        this.trail
+          .moveTo(x0, previous.y)
+          .lineTo(x1, current.y)
+          .stroke({ width: 0.55 + strength * 1.05, color: 0xffffff, alpha: alpha * 0.82 });
+      }
+    }
+  }
+
+  private drawAfterimages(
+    history: readonly TrailSample[],
+    cameraX: number,
+    color: number,
+    currentTick: number,
+  ) {
+    if (!this.courierFrames || this.reducedMotion || this.photosensitive || history.length < 4) return;
+    const qualityCap = this.quality === "high" ? 6 : this.quality === "medium" ? 4 : 2;
+    const requested = this.cosmetics.trailId === "afterimage"
+      ? qualityCap
+      : this.cosmetics.trailId === "event-horizon"
+        ? Math.max(1, qualityCap - 1)
+        : Math.max(1, Math.ceil(qualityCap / 2));
+    const targetAges = [4, 8, 12, 16, 22, 28].slice(0, Math.min(requested, this.afterimages.length));
+    const samples = selectTrailSamplesByAge(history, currentTick, targetAges);
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index];
+      const ghost = this.afterimages[index];
+      if (!sample || !ghost) continue;
+      ghost.texture = this.courierFrames[sample.frameIndex] ?? this.courierFrames[0]!;
+      const anchor = projectCourierAnchor(sample, cameraX, 21);
+      ghost.position.set(anchor.x, anchor.y);
+      ghost.rotation = sample.rotation;
+      ghost.scale.set(COURIER_SCALE * (1 - index * 0.035));
+      ghost.tint = color;
+      ghost.alpha = (this.cosmetics.trailId === "afterimage" ? 0.24 : 0.14) *
+        (1 - index / (samples.length + 1));
+      ghost.visible = true;
+    }
+  }
+
   private consumePulses(
     pulses: readonly RenderPulse[],
-    cameraX: number,
+    _cameraX: number,
     palette: { primary: number; secondary: number; accent: number },
   ) {
     for (const pulse of pulses) {
@@ -472,7 +708,7 @@ export class PixiGameView {
         const oldest = this.seenPulses.values().next().value as string | undefined;
         if (oldest) this.seenPulses.delete(oldest);
       }
-      const x = pulse.x - cameraX;
+      const x = pulse.x;
       const equippedBurst = this.cosmetics.burstId === "phase-flower"
         ? 0xff2bd6
         : this.cosmetics.burstId === "singularity"
@@ -495,7 +731,11 @@ export class PixiGameView {
         this.rings.push({ x, y: pulse.y, radius: 5, life: pulse.type === "death" ? 0.9 : 0.55, color });
       }
       if (!calmVisuals && (pulse.type === "perfect" || pulse.type === "prism" || pulse.type === "portal" || pulse.type === "death" || pulse.type === "complete")) {
-        this.postFx?.trigger(pulse.type === "death" ? 1.35 : 0.75);
+        this.postFx?.trigger(
+          pulse.type === "death" ? 1.35 : 0.75,
+          (pulse.x - (this.frame?.cameraX ?? 0)) / WIDTH,
+          pulse.y / HEIGHT,
+        );
       }
     }
   }
@@ -540,14 +780,18 @@ export class PixiGameView {
     }
   }
 
-  private drawParticles() {
+  private drawParticles(cameraX: number) {
     this.particlesGraphic.clear();
     for (const particle of this.particles) {
       const alpha = Math.min(1, particle.life / particle.maxLife);
-      this.particlesGraphic.rect(particle.x, particle.y, particle.size, particle.size).fill({ color: particle.color, alpha });
+      this.particlesGraphic
+        .rect(particle.x - cameraX, particle.y, particle.size, particle.size)
+        .fill({ color: particle.color, alpha });
     }
     for (const ring of this.rings) {
-      this.particlesGraphic.circle(ring.x, ring.y, ring.radius).stroke({ width: 2, color: ring.color, alpha: Math.min(1, ring.life * 1.5) });
+      this.particlesGraphic
+        .circle(ring.x - cameraX, ring.y, ring.radius)
+        .stroke({ width: 2, color: ring.color, alpha: Math.min(1, ring.life * 1.5) });
     }
   }
 
