@@ -64,7 +64,7 @@ describe("leaderboard Edge boundary", () => {
       Response.json([
         {
           best_score_id: 1,
-          board_id: "campaign:glass-horizon",
+          board_id: "campaign:v2:glass-horizon",
           client_id: "018f4c2a-6f23-7d81-9b4e-c320ae0f1234",
           callsign: "VECTOR",
           score: "12000",
@@ -76,7 +76,7 @@ describe("leaderboard Edge boundary", () => {
 
     const response = await handler!(
       new Request(
-        "https://edge.example/functions/v1/vanta-pulse-leaderboard?boardId=campaign%3Aglass-horizon",
+        "https://edge.example/functions/v1/vanta-pulse-leaderboard?boardId=campaign%3Av2%3Aglass-horizon",
         { headers: { Origin: "https://game.example" } },
       ),
     );
@@ -108,7 +108,7 @@ describe("leaderboard Edge boundary", () => {
 
     const response = await handler!(
       new Request(
-        "https://edge.example/functions/v1/vanta-pulse-leaderboard?boardId=campaign%3Aphase-bloom",
+        "https://edge.example/functions/v1/vanta-pulse-leaderboard?boardId=campaign%3Av2%3Aphase-bloom",
       ),
     );
     expect(response.status).toBe(200);
@@ -186,6 +186,21 @@ describe("leaderboard Edge boundary", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects legacy physics tickets before issuing a run", async () => {
+    const identity = await issueIdentity();
+    const response = await post("/ticket", {
+      action: "ticket",
+      clientId: identity.clientId,
+      credential: identity.credential,
+      mode: "campaign",
+      levelId: "glass-horizon",
+      simulationVersion: 1,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ ok: false, error: "invalid_ticket_request" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("HMACs public IDs and refreshes through the configured previous key", async () => {
     environment.set("VANTA_PULSE_DEVICE_CREDENTIAL_SECRET", "a".repeat(32));
     const original = await issueIdentity();
@@ -260,7 +275,7 @@ describe("leaderboard Edge boundary", () => {
     const identity = await issueIdentity();
     const replay = createReferenceReplay(GLASS_HORIZON);
     const verified = verifyReplay({
-      boardId: "campaign:glass-horizon",
+      boardId: "campaign:v2:glass-horizon",
       mode: replay.mode,
       levelId: replay.levelId,
       seed: replay.seed,
@@ -275,7 +290,7 @@ describe("leaderboard Edge boundary", () => {
       if (url.endsWith("/rpc/vanta_pulse_begin_submission")) {
         expect(body.p_client_id).toBe(identity.clientId);
         return Response.json({
-          board_id: "campaign:glass-horizon",
+          board_id: "campaign:v2:glass-horizon",
           mode: "campaign",
           level_id: "glass-horizon",
           seed: GLASS_HORIZON.seed,
@@ -297,7 +312,7 @@ describe("leaderboard Edge boundary", () => {
         expect(body.p_replay_hash).toMatch(/^[0-9a-f]{64}$/);
         return Response.json({
           run_id: "018f4c2a-6f23-7d81-9b4e-c320ae0f5678",
-          board_id: "campaign:glass-horizon",
+          board_id: "campaign:v2:glass-horizon",
           score: verified.score,
           duration_ms: verified.durationMs,
           is_personal_best: false,

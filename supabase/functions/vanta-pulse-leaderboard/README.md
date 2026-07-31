@@ -18,7 +18,7 @@ When rotating a dedicated credential key, move the old value into `VANTA_PULSE_D
 
 ## API
 
-- `GET ?boardId=campaign:glass-horizon&limit=25` — public personal-best rows using keyed public aliases; raw client and run UUIDs are never returned
+- `GET ?boardId=campaign:v2:glass-horizon&limit=25` — public personal-best rows using keyed public aliases; raw client and run UUIDs are never returned
 - `POST /identity` — create or refresh a server-signed anonymous device identity
 - `POST /ticket` — issue a three-minute database ticket and a two-hour signed same-run renewal lease
 - `POST /renew` — mint a new database ticket for the exact signed board/mode/level/seed/simulation version

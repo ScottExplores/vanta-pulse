@@ -179,6 +179,7 @@ export const simulationToRenderFrame = (
     .filter((pulse): pulse is RenderPulse => pulse !== undefined);
   return {
     tick: state.tick,
+    attempt: state.attempt,
     theme: themeForLevel(state.level),
     cameraX,
     progress,
@@ -193,20 +194,26 @@ export const simulationToRenderFrame = (
     actors: [
       {
         id: "courier",
+        role: "courier",
         x: state.player.x,
         y: GROUND_Y - state.player.y - 21,
         rotation: (-state.player.rotationTenths * Math.PI) / 18_000,
         lane: 0,
+        grounded: state.player.grounded,
+        velocityY: state.player.velocityY,
         dead: state.status === "dead",
       },
       ...state.echoes
         .filter((echo) => echo.active)
         .map((echo, index) => ({
           id: echo.id,
+          role: "echo" as const,
           x: echo.x,
           y: GROUND_Y - echo.y - 21 - (index + 1) * 62,
           rotation: (-state.player.rotationTenths * Math.PI) / 18_000,
           lane: index + 1,
+          grounded: echo.grounded,
+          velocityY: echo.velocityY,
           alpha: index === 0 ? 0.6 : 0.42,
           color: index === 0 ? 0xff2bd6 : 0xc8ff4a,
         })),

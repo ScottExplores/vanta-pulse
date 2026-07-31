@@ -329,7 +329,7 @@ function resolveTicketScope(body: JsonRecord): RunScope {
       throw new ApiError("invalid_ticket_request", 400);
     }
     return {
-      boardId: `campaign:${levelId}`,
+      boardId: `campaign:v${SIMULATION_VERSION}:${levelId}`,
       mode,
       levelId,
       seed: CAMPAIGN_SEEDS[levelId as keyof typeof CAMPAIGN_SEEDS],
@@ -356,7 +356,7 @@ function resolveTicketScope(body: JsonRecord): RunScope {
       throw new ApiError("daily_not_active", 400);
     }
     return {
-      boardId: `daily:${date}`,
+      boardId: `daily:v${SIMULATION_VERSION}:${date}`,
       mode,
       levelId: `daily-${date}`,
       seed: dailySeedForDate(date),
@@ -383,7 +383,7 @@ function resolveTicketScope(body: JsonRecord): RunScope {
   const seed = randomUint32();
   const levelId = `endless-${seed.toString(16).padStart(8, "0")}-${segmentCount}`;
   return {
-    boardId: `endless:${segmentCount}`,
+    boardId: `endless:v${SIMULATION_VERSION}:${segmentCount}`,
     mode,
     levelId,
     seed,
@@ -687,10 +687,10 @@ function validateReplay(value: unknown): Replay {
 }
 
 function boardIdForReplay(replay: Replay): string {
-  if (replay.mode === "campaign") return `campaign:${replay.levelId}`;
+  if (replay.mode === "campaign") return `campaign:v${SIMULATION_VERSION}:${replay.levelId}`;
   if (replay.mode === "daily") {
     const date = replay.levelId.replace(/^daily-/, "");
-    const boardId = `daily:${date}`;
+    const boardId = `daily:v${SIMULATION_VERSION}:${date}`;
     if (!/^daily-\d{4}-\d{2}-\d{2}$/.test(replay.levelId) || !BOARD_PATTERN.test(boardId)) {
       throw new ApiError("invalid_replay", 400);
     }
@@ -699,7 +699,7 @@ function boardIdForReplay(replay: Replay): string {
   const match = /^endless-[0-9a-f]{8}-(\d{1,3})$/.exec(replay.levelId);
   const segmentCount = match?.[1] ? Number(match[1]) : Number.NaN;
   if (!isInteger(segmentCount, 1, 128)) throw new ApiError("invalid_replay", 400);
-  return `endless:${segmentCount}`;
+  return `endless:v${SIMULATION_VERSION}:${segmentCount}`;
 }
 
 async function postgrest(

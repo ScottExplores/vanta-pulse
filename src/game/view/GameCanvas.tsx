@@ -67,6 +67,14 @@ export const GameCanvas = forwardRef<GameCanvasHandle, GameCanvasProps>(function
       })
       .catch((error: unknown) => {
         if (!cancelled) {
+          const failedView = view;
+          view = null;
+          if (viewRef.current === failedView) viewRef.current = null;
+          if (failedView) {
+            void failedView.destroy().catch((destroyError: unknown) => {
+              console.error("VANTA//PULSE failed renderer cleanup", destroyError);
+            });
+          }
           setRendererError(true);
           onError?.();
           console.error("VANTA//PULSE renderer initialization failed", error);

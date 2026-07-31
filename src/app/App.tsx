@@ -42,12 +42,33 @@ import {
   saveSettings,
 } from "../game/persistence/settings";
 import { GameRuntime, type RuntimeHudSnapshot } from "../game/runtime";
-import { SIMULATION_HZ, type Replay, type SimulationEvent, type SimulationState } from "../game/sim";
-import { GameCanvas, type GameCanvasHandle, type GameRenderFrame } from "../game/view";
+import {
+  SIMULATION_HZ,
+  SIMULATION_VERSION,
+  type Replay,
+  type SimulationEvent,
+  type SimulationState,
+} from "../game/sim";
+import {
+  GameCanvas,
+  selectRenderQuality,
+  type GameCanvasHandle,
+  type GameRenderFrame,
+  type RenderQuality,
+} from "../game/view";
 
 const PROGRESS_KEY = "vanta-pulse.progress.v1";
 const COSMETICS_KEY = "vanta-pulse.cosmetics.v1";
 const COUNTDOWN_STEP_MS = 560;
+
+const detectRenderQuality = (): RenderQuality => selectRenderQuality({
+  coarsePointer: window.matchMedia?.("(pointer: coarse)").matches ?? false,
+  viewportWidth: window.innerWidth,
+  effectivePixels: window.innerWidth * window.innerHeight *
+    Math.min(window.devicePixelRatio || 1, 1.5) ** 2,
+  hardwareConcurrency: navigator.hardwareConcurrency || 4,
+  deviceMemoryGb: (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+});
 
 type Screen = "loading" | "menu" | "game" | "results";
 type ProgressRecord = Record<string, { bestScore: number; completion: number }>;
@@ -129,7 +150,7 @@ const saveProgress = (progress: ProgressRecord) => {
   }
 };
 
-const boardForCampaign = (id: string) => `campaign:${id}`;
+const boardForCampaign = (id: string) => `campaign:v${SIMULATION_VERSION}:${id}`;
 const themeFor = (level: LevelDefinition): AudioThemeId => {
   if (level.mode === "daily" || level.mode === "endless") return level.mode;
   return level.id as AudioThemeId;
@@ -229,6 +250,7 @@ export function App() {
   const [cosmetics, setCosmetics] = useState<CosmeticItem[]>(() => loadCosmetics());
   const [cosmeticCategory, setCosmeticCategory] = useState<CosmeticCategory>("shell");
   const [attempt, setAttempt] = useState(1);
+  const [renderQuality, setRenderQuality] = useState<RenderQuality>(() => detectRenderQuality());
 
   const canvasRef = useRef<GameCanvasHandle>(null);
   const runtimeRef = useRef<GameRuntime | null>(null);
@@ -473,7 +495,7 @@ export function App() {
     } else if (ticket.mode === "daily") {
       level = createDailyLevel(ticket.levelId.replace(/^daily-/, ""));
     } else {
-      level = createEndlessLevel(ticket.seed, Number(ticket.boardId.split(":")[1] ?? 24));
+      level = createEndlessLevel(ticket.seed, Number(ticket.boardId.split(":").at(-1) ?? 24));
     }
     setActiveRun({ level, ticket, request });
     setHud({ ...initialHud(), totalPrisms: level.prisms.length });
@@ -520,6 +542,19 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let scheduledFrame = 0;
+    const refreshRenderQuality = () => {
+      window.cancelAnimationFrame(scheduledFrame);
+      scheduledFrame = window.requestAnimationFrame(() => setRenderQuality(detectRenderQuality()));
+    };
+    window.addEventListener("resize", refreshRenderQuality, { passive: true });
+    return () => {
+      window.removeEventListener("resize", refreshRenderQuality);
+      window.cancelAnimationFrame(scheduledFrame);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
@@ -534,11 +569,12 @@ export function App() {
     saveSettings(settings);
     audioRef.current.setMix(settings.masterVolume, settings.musicVolume, settings.sfxVolume);
     canvasRef.current?.configure({
+      quality: renderQuality,
       reducedMotion: settings.reducedMotion,
       photosensitive: settings.photosensitiveMode,
       highContrast: settings.highContrast,
     });
-  }, [settings]);
+  }, [renderQuality, settings]);
 
   useEffect(() => {
     audioRef.current.setMuted(!soundEnabled);
@@ -714,10 +750,7 @@ export function App() {
             onPress={press}
             onRelease={release}
             options={{
-              quality: navigator.hardwareConcurrency <= 4 ||
-                window.innerWidth * window.innerHeight * Math.min(window.devicePixelRatio || 1, 1.5) ** 2 > 4_000_000
-                ? "medium"
-                : "high",
+              quality: renderQuality,
               reducedMotion: settings.reducedMotion,
               photosensitive: settings.photosensitiveMode,
               highContrast: settings.highContrast,

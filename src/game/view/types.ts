@@ -2,10 +2,13 @@ export type VisualThemeId = "glass-horizon" | "phase-bloom" | "null-circuit" | "
 
 export type RenderActor = {
   id: string;
+  role: "courier" | "echo";
   x: number;
   y: number;
   rotation: number;
   lane: number;
+  grounded: boolean;
+  velocityY: number;
   color?: number;
   alpha?: number;
   dead?: boolean;
@@ -49,6 +52,7 @@ export type RenderPulse = {
 
 export type GameRenderFrame = {
   tick: number;
+  attempt: number;
   theme: VisualThemeId;
   cameraX: number;
   progress: number;

@@ -34,6 +34,7 @@ uniform float uTime;
 uniform float uIntensity;
 uniform float uBurst;
 uniform float uPhotosafe;
+uniform vec2 uBurstOrigin;
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -59,8 +60,13 @@ void main(void) {
   float grain = (hash(gl_FragCoord.xy + uTime * 19.0) - 0.5) * 0.018 * uIntensity * dynamicFx;
   color += grain;
 
+  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color = mix(vec3(luma), color, 1.0 + 0.16 * uIntensity * dynamicFx);
+  color *= 1.0 + 0.035 * uIntensity;
+
   float safeBurst = uBurst * dynamicFx;
-  color += vec3(0.02, 0.045, 0.055) * safeBurst;
+  float radialBurst = exp(-distance(uv, uBurstOrigin) * 7.5) * safeBurst;
+  color += vec3(0.035, 0.11, 0.15) * radialBurst;
   finalColor = vec4(color * base.a, base.a);
 }`;
 
@@ -69,6 +75,7 @@ type UniformBag = {
   uIntensity: number;
   uBurst: number;
   uPhotosafe: number;
+  uBurstOrigin: Float32Array;
 };
 
 export class NeonPostFx {
@@ -85,6 +92,7 @@ export class NeonPostFx {
           uIntensity: { value: 1, type: "f32" },
           uBurst: { value: 0, type: "f32" },
           uPhotosafe: { value: 0, type: "f32" },
+          uBurstOrigin: { value: new Float32Array([0.5, 0.5]), type: "vec2<f32>" },
         },
       },
       resolution: 1,
@@ -99,8 +107,10 @@ export class NeonPostFx {
     this.uniforms.uBurst = this.burst;
   }
 
-  trigger(strength = 1) {
+  trigger(strength = 1, normalizedX = 0.5, normalizedY = 0.5) {
     this.burst = Math.max(this.burst, Math.min(1.5, strength));
+    this.uniforms.uBurstOrigin[0] = Math.max(0, Math.min(1, normalizedX));
+    this.uniforms.uBurstOrigin[1] = Math.max(0, Math.min(1, normalizedY));
   }
 
   configure(options: { intensity: number; photosensitive: boolean; resolution?: number }) {

@@ -2923,12 +2923,19 @@ button.vp-input-hint {
   }
 
   .vp-menu-hero .vp-brand {
-    font-size: clamp(1.75rem, 8.6vw, 3.3rem);
-    letter-spacing: 0.11em;
+    font-size: clamp(1.5rem, 7.2vw, 3.3rem);
+    letter-spacing: 0.08em;
+  }
+
+  .vp-menu-hero .vp-brand__pulse {
+    letter-spacing: 0.12em;
   }
 
   .vp-menu-hero h1 {
+    display: flex;
+    justify-content: center;
     margin-bottom: 37px;
+    width: 100%;
   }
 
   .vp-menu-hero .vp-eclipse {
