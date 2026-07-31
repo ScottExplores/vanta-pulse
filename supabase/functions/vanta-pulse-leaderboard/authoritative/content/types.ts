@@ -9,6 +9,7 @@ export interface GapDefinition {
   readonly startX: number;
   readonly endX: number;
 }
+
 export interface HazardDefinition {
   readonly id: string;
   readonly kind: HazardKind;
